@@ -35,7 +35,11 @@
   - 🇺🇸 **Hispano USA:** Alonso (Broadcast corporativo)
   - 🇪🇸 **España:** Álvaro (Documental solemne), Elvira (Narrativa literaria), Arnau (Tech/Gaming)
   - 🇺🇸 🇬🇧 **Inglés:** Guy (Deep Cinematic), Jenny (Storyteller), Aria (Emotional Drama), Sonia (BBC Investigative), Ryan (Oxford Academic)
-- [x] **ESCULTURA ACÚSTICA REAL POR EMOCIÓN E INTENCIÓN**: Las 24 emociones y 19 intenciones ahora modulan activamente la velocidad, tono e inflexión en la síntesis del servidor y se reflejan en tiempo real en el HUD acústico.
+- [x] **RESILIENCIA Y RESOLUCIÓN MULTI-VOZ EN PRODUCCIÓN**:
+  - Eliminada la dependencia estricta de binarios externos (`ffmpeg`/`espeak-ng`) que provocaba que la síntesis fallara en el contenedor de producción y cayera silenciosamente en la única voz por defecto del sistema operativo del usuario.
+  - Implementado codificador PCM WAV nativo en el cliente (`wavEncoder.ts`) y entrega directa de flujo MP3 neural en el backend para previsualización y exportación.
+  - Mapeo exhaustivo de identificadores (`NEURAL_VOICE_MAP`) con soporte para nombres cortos, IDs compuestos y alias para las 16 voces de estudio y clones.
+  - Sistema de reintento automático y verificación de estado 200 en cada una de las voces disponibles.
 - [x] **AUDIO CORE MVP (NEURAL STUDIO UPGRADE)**: Motor de síntesis actualizado con voces neuronales de alta definición (Microsoft Edge Neural TTS: `AlvaroNeural`, `ElviraNeural`, `JorgeNeural`, `DaliaNeural`, `GuyNeural`, `SoniaNeural`). La previsualización y el archivo descargado (WAV/MP3) ahora utilizan la **misma voz natural, humana y de estudio**, eliminando la síntesis robótica antigua de espeak.
 - [x] **BACKEND TTS SERVICE**: Servidor Express en `server.ts` con endpoint `/api/tts/synthesize` (MsEdgeTTS + transcodificación FFmpeg PCM 16-bit a 44.1kHz).
 - [x] **VOICE REGISTRY**: `voiceService.ts` con voces locales Nexus (`canExportAudio: true`), voces del navegador (`canExportAudio: false`) y proveedores Cloud.

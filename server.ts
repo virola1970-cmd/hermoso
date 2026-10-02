@@ -2,17 +2,22 @@
  * NEXUS VOICE STUDIO — Backend Server
  * Express server mounted with Vite middlewares in development.
  * Handles server-side Neural TTS synthesis (MsEdgeTTS) with 24 emotions & 19 intentions,
- * and pristine FFmpeg mastering (WAV/MP3).
+ * resilient audio delivery (zero crash on Cloud Run / production without external FFmpeg).
  */
 
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import os from 'os';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const execFileAsync = promisify(execFile);
 const app = express();
@@ -20,29 +25,74 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
-// Complete mapping of all free Neural Voice models
+// Complete mapping of all free Neural Voice models & aliases
 const NEURAL_VOICE_MAP: Record<string, string> = {
   // Español Latino
   'nexus-es-mx-jorge': 'es-MX-JorgeNeural',
+  'es-mx-jorgeneural': 'es-MX-JorgeNeural',
+  'jorge': 'es-MX-JorgeNeural',
+
   'nexus-es-mx-dalia': 'es-MX-DaliaNeural',
+  'es-mx-dalianeural': 'es-MX-DaliaNeural',
+  'dalia': 'es-MX-DaliaNeural',
+
   'nexus-es-co-gonzalo': 'es-CO-GonzaloNeural',
+  'es-co-gonzaloneural': 'es-CO-GonzaloNeural',
+  'gonzalo': 'es-CO-GonzaloNeural',
+
   'nexus-es-co-salome': 'es-CO-SalomeNeural',
+  'es-co-salomeneural': 'es-CO-SalomeNeural',
+  'salome': 'es-CO-SalomeNeural',
+
   'nexus-es-ar-tomas': 'es-AR-TomasNeural',
+  'es-ar-tomasneural': 'es-AR-TomasNeural',
+  'tomas': 'es-AR-TomasNeural',
+
   'nexus-es-ar-elena': 'es-AR-ElenaNeural',
+  'es-ar-elenaneural': 'es-AR-ElenaNeural',
+  'elena': 'es-AR-ElenaNeural',
+
   'nexus-es-pe-camila': 'es-PE-CamilaNeural',
+  'es-pe-camilaneural': 'es-PE-CamilaNeural',
+  'camila': 'es-PE-CamilaNeural',
+
   'nexus-es-us-alonso': 'es-US-AlonsoNeural',
+  'es-us-alsonsoneural': 'es-US-AlonsoNeural',
+  'alonso': 'es-US-AlonsoNeural',
 
   // Español España
   'nexus-loc-es-doc': 'es-ES-AlvaroNeural',
+  'es-es-alvaroneural': 'es-ES-AlvaroNeural',
+  'alvaro': 'es-ES-AlvaroNeural',
+
   'nexus-loc-es-narrator': 'es-ES-ElviraNeural',
+  'es-es-elviraneural': 'es-ES-ElviraNeural',
+  'elvira': 'es-ES-ElviraNeural',
+
   'nexus-es-arnau': 'es-ES-ArnauNeural',
+  'es-es-arnauneural': 'es-ES-ArnauNeural',
+  'arnau': 'es-ES-ArnauNeural',
 
   // English US & UK
   'nexus-loc-en-doc': 'en-US-GuyNeural',
+  'en-us-guyneural': 'en-US-GuyNeural',
+  'guy': 'en-US-GuyNeural',
+
   'nexus-en-jenny': 'en-US-JennyNeural',
+  'en-us-jennyneural': 'en-US-JennyNeural',
+  'jenny': 'en-US-JennyNeural',
+
   'nexus-en-aria': 'en-US-AriaNeural',
+  'en-us-arianeural': 'en-US-AriaNeural',
+  'aria': 'en-US-AriaNeural',
+
   'nexus-loc-en-elena': 'en-GB-SoniaNeural',
+  'en-gb-sonianeural': 'en-GB-SoniaNeural',
+  'sonia': 'en-GB-SoniaNeural',
+
   'nexus-en-ryan': 'en-GB-RyanNeural',
+  'en-gb-ryanneural': 'en-GB-RyanNeural',
+  'ryan': 'en-GB-RyanNeural',
 };
 
 // Emotion acoustic modulation table (rate modifier %, pitch modifier Hz)
@@ -97,8 +147,16 @@ const INTENTION_ACOUSTICS: Record<string, { rate: number; pitch: number }> = {
 };
 
 function resolveNeuralVoice(voiceId?: string, lang?: string): string {
-  if (voiceId && NEURAL_VOICE_MAP[voiceId]) {
-    return NEURAL_VOICE_MAP[voiceId];
+  if (voiceId) {
+    const cleanId = voiceId.toLowerCase().trim();
+    if (NEURAL_VOICE_MAP[cleanId]) {
+      return NEURAL_VOICE_MAP[cleanId];
+    }
+    for (const val of Object.values(NEURAL_VOICE_MAP)) {
+      if (val.toLowerCase() === cleanId) {
+        return val;
+      }
+    }
   }
   const l = (lang || 'es-MX').toLowerCase();
   if (l.includes('mx') || l.includes('la')) return 'es-MX-JorgeNeural';
@@ -133,7 +191,7 @@ app.post('/api/tts/synthesize', async (req: Request, res: Response) => {
       emotion = 'neutral',
       emotionIntensity = 50,
       intent = 'inform',
-      format = 'wav',
+      format = 'mp3',
       bitrate = '192k',
     } = req.body;
 
@@ -148,7 +206,7 @@ app.post('/api/tts/synthesize', async (req: Request, res: Response) => {
       return;
     }
 
-    // If this is a cloned voice with a base model, use that base model
+    // Resolve voice model
     const targetVoiceId = cloneBaseVoiceId || voiceId;
     const selectedNeuralVoice = resolveNeuralVoice(targetVoiceId, lang);
     const tempDir = path.join(
@@ -158,6 +216,7 @@ app.post('/api/tts/synthesize', async (req: Request, res: Response) => {
     await fs.mkdir(tempDir, { recursive: true });
 
     let audioData: Buffer | null = null;
+    let actualFormat = 'mp3';
 
     try {
       // 1. Primary: High-fidelity Studio Neural Voice via MsEdgeTTS
@@ -174,14 +233,12 @@ app.post('/api/tts/synthesize', async (req: Request, res: Response) => {
 
       // Base user speed modifier
       const baseRatePercent = (Math.max(0.5, Math.min(2.0, speed)) - 1.0) * 100;
-      // Combined emotion + intention rate modifier
       const totalRatePercent = Math.round(
         baseRatePercent + emoMod.rate * intensityWeight + intMod.rate * 0.6
       );
 
       // Base user pitch modifier (semitones to Hz approximation: 1st ~ 4Hz)
       const basePitchHz = pitch * 4;
-      // Combined emotion + intention pitch modifier
       const totalPitchHz = Math.round(
         basePitchHz + emoMod.pitch * intensityWeight + intMod.pitch * 0.5
       );
@@ -201,66 +258,70 @@ app.post('/api/tts/synthesize', async (req: Request, res: Response) => {
       }
 
       const generatedMp3Path = path.join(tempDir, 'audio.mp3');
-      const tempFinalOutput = path.join(tempDir, `final_output.${format}`);
 
       if (format === 'wav') {
-        // Convert studio 24kHz neural MP3 to pristine 16-bit PCM WAV using FFmpeg
-        await execFileAsync('/usr/bin/ffmpeg', [
-          '-y',
-          '-i',
-          generatedMp3Path,
-          '-acodec',
-          'pcm_s16le',
-          '-ar',
-          '44100',
-          tempFinalOutput,
-        ]);
-        audioData = await fs.readFile(tempFinalOutput);
-      } else {
-        // MP3 with requested bitrate
-        if (bitrate && bitrate !== '96k') {
-          await execFileAsync('/usr/bin/ffmpeg', [
+        const tempFinalOutput = path.join(tempDir, 'final_output.wav');
+        try {
+          await execFileAsync('ffmpeg', [
             '-y',
             '-i',
             generatedMp3Path,
-            '-b:a',
-            bitrate,
+            '-acodec',
+            'pcm_s16le',
+            '-ar',
+            '44100',
             tempFinalOutput,
           ]);
           audioData = await fs.readFile(tempFinalOutput);
+          actualFormat = 'wav';
+        } catch {
+          // If ffmpeg is not available, safely return the MP3
+          audioData = await fs.readFile(generatedMp3Path);
+          actualFormat = 'mp3';
+        }
+      } else {
+        // format is mp3
+        if (bitrate && bitrate !== '96k') {
+          const tempFinalOutput = path.join(tempDir, 'final_output.mp3');
+          try {
+            await execFileAsync('ffmpeg', [
+              '-y',
+              '-i',
+              generatedMp3Path,
+              '-b:a',
+              bitrate,
+              tempFinalOutput,
+            ]);
+            audioData = await fs.readFile(tempFinalOutput);
+          } catch {
+            audioData = await fs.readFile(generatedMp3Path);
+          }
         } else {
           audioData = await fs.readFile(generatedMp3Path);
         }
+        actualFormat = 'mp3';
       }
     } catch (neuralErr) {
-      console.warn('Fallo en Neural TTS, recurriendo a respaldo espeak-ng:', neuralErr);
-      const fallbackWav = path.join(tempDir, 'fallback.wav');
-      const fallbackOut = path.join(tempDir, `fallback_out.${format}`);
-      const voiceCode = lang.startsWith('en') ? 'en-us' : 'es';
-      const wpm = Math.round(160 * Math.max(0.5, Math.min(2.0, speed)));
+      console.warn('Fallo en Neural TTS MsEdgeTTS:', neuralErr);
+      // Fallback: try espeak-ng if available
+      try {
+        const fallbackWav = path.join(tempDir, 'fallback.wav');
+        const voiceCode = lang.startsWith('en') ? 'en-us' : 'es';
+        const wpm = Math.round(160 * Math.max(0.5, Math.min(2.0, speed)));
 
-      await execFileAsync('/usr/bin/espeak-ng', [
-        '-v',
-        voiceCode,
-        '-s',
-        String(wpm),
-        '-w',
-        fallbackWav,
-        cleanText,
-      ]);
-
-      if (format === 'mp3') {
-        await execFileAsync('/usr/bin/ffmpeg', [
-          '-y',
-          '-i',
+        await execFileAsync('espeak-ng', [
+          '-v',
+          voiceCode,
+          '-s',
+          String(wpm),
+          '-w',
           fallbackWav,
-          '-b:a',
-          bitrate || '192k',
-          fallbackOut,
+          cleanText,
         ]);
-        audioData = await fs.readFile(fallbackOut);
-      } else {
         audioData = await fs.readFile(fallbackWav);
+        actualFormat = 'wav';
+      } catch (espeakErr) {
+        console.error('Fallo en fallback espeak-ng:', espeakErr);
       }
     } finally {
       try {
@@ -271,13 +332,15 @@ app.post('/api/tts/synthesize', async (req: Request, res: Response) => {
     }
 
     if (!audioData) {
-      throw new Error('No se pudo generar el audio.');
+      throw new Error(`No se pudo generar audio para la voz solicitada (${selectedNeuralVoice}).`);
     }
 
-    res.setHeader('Content-Type', format === 'mp3' ? 'audio/mpeg' : 'audio/wav');
+    res.setHeader('Content-Type', actualFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav');
+    res.setHeader('X-Audio-Format', actualFormat);
+    res.setHeader('X-Voice-Used', selectedNeuralVoice);
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="nexus_voice_${Date.now()}.${format}"`
+      `attachment; filename="nexus_${selectedNeuralVoice}_${Date.now()}.${actualFormat}"`
     );
     res.send(audioData);
   } catch (err: unknown) {

@@ -5,6 +5,7 @@
  */
 
 import { VoiceProfile, AudioFormat, Mp3Bitrate, WavBitDepth, TargetLoudnessPreset } from '../types/nexus';
+import { audioBufferToWavBlob } from '../utils/wavEncoder';
 
 export interface PlaybackState {
   isPlaying: boolean;
@@ -128,7 +129,15 @@ class AudioEngine {
         await this.previewViaServer(cleanText, voice, options);
         return;
       } catch (err) {
-        console.warn('Fallback a Web Speech API para previsualización:', err);
+        console.warn('Primer intento de síntesis fallido, reintentando...', err);
+        try {
+          await new Promise((r) => setTimeout(r, 400));
+          await this.previewViaServer(cleanText, voice, options);
+          return;
+        } catch (retryErr: unknown) {
+          const msg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          throw new Error(`Error al sintetizar voz neural "${voice.name}": ${msg}`);
+        }
       }
     }
 
@@ -234,12 +243,13 @@ class AudioEngine {
         emotion: options?.emotion || 'neutral',
         emotionIntensity: options?.emotionIntensity ?? 50,
         intent: options?.intent || 'inform',
-        format: 'wav',
+        format: 'mp3',
       }),
     });
 
     if (!res.ok) {
-      throw new Error('Error al conectar con el motor de voz del servidor.');
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || errData.details || 'Error al conectar con el motor de voz del servidor.');
     }
 
     const arrayBuf = await res.arrayBuffer();
@@ -284,7 +294,7 @@ class AudioEngine {
 
   /**
    * DESCARGAR (Download function):
-   * Generates genuine spoken WAV or MP3 audio via backend TTS (espeak-ng + FFmpeg)
+   * Generates genuine spoken WAV or MP3 audio via backend TTS
    * and triggers clean browser download.
    */
   public async download(
@@ -324,23 +334,37 @@ class AudioEngine {
         text: cleanText,
         voiceId: voice.id,
         cloneBaseVoiceId: voice.cloneAcoustics?.baseVoiceId,
-        lang: voice.locale || 'es-ES',
+        lang: voice.locale || 'es-MX',
         speed: options.speed ?? voice.defaultSpeed ?? 1.0,
         pitch: options.pitch ?? voice.defaultPitch ?? 0,
         emotion: options.emotion || 'neutral',
         emotionIntensity: options.emotionIntensity ?? 50,
         intent: options.intent || 'inform',
-        format: options.format,
+        format: options.format === 'wav' ? 'wav' : 'mp3',
         bitrate: options.bitrate || '192k',
       }),
     });
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
-      throw new Error(errJson.error || 'Fallo en la generación de audio del servidor.');
+      throw new Error(errJson.error || errJson.details || 'Fallo en la generación de audio del servidor.');
     }
 
-    const blob = await res.blob();
+    const rawBlob = await res.blob();
+    let finalBlob: Blob = rawBlob;
+
+    // If WAV requested, guarantee genuine PCM WAV by decoding and encoding client-side if needed
+    if (options.format === 'wav') {
+      try {
+        const arrayBuf = await rawBlob.arrayBuffer();
+        const ctx = this.getAudioContext();
+        const audioBuf = await ctx.decodeAudioData(arrayBuf);
+        finalBlob = audioBufferToWavBlob(audioBuf, options.wavBitDepth || '16bit');
+      } catch (wavErr) {
+        console.warn('Conversión client-side a WAV omitida, usando audio directo:', wavErr);
+        finalBlob = rawBlob;
+      }
+    }
 
     // Prepare filename
     const safeTitle = (options.projectTitle || 'NEXUS_Audio')
@@ -357,7 +381,7 @@ class AudioEngine {
     const filename = `${safeTitle}_${safeVoice}_${timestamp}.${options.format}`;
 
     // Trigger download
-    const url = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(finalBlob);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
@@ -368,7 +392,7 @@ class AudioEngine {
       URL.revokeObjectURL(url);
     }, 1200);
 
-    return { filename, blob };
+    return { filename, blob: finalBlob };
   }
 
   /**
