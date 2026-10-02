@@ -1,0 +1,6 @@
+{
+  "name": "NEXUS Voice Studio",
+  "description": "AI Natural Voice & Narrative Production Studio — direction, emotion, storytelling and sound staging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
